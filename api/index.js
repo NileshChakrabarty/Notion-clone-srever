@@ -29,6 +29,9 @@ db.connect((err) => {
     }
     console.log('Connected to MySQL database');
 });
+app.get("/",(req,res)=>{
+    res.send("Hello")
+})
 app.get('/api/setup-users-table', (req, res) => {
     // SQL query to create users table
     const createUsersTableQuery = `
