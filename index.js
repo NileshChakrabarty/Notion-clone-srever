@@ -62,44 +62,32 @@ app.get('/api/setup-users-table', (req, res) => {
 });
 
 // Register endpoint
-app.post('/api/signup', (req, res) => {
+app.post('/api/signup', async (req, res) => {
     const { username, email, password } = req.body;
 
-    // Validate email
     if (!email || !emailValidator.validate(email)) {
         return res.status(400).json({ message: 'Invalid email format' });
     }
 
-    // Validate password
-    if (!password) {
-        return res.status(400).json({ message: 'Password cannot be empty' });
+    if (!password || !username) {
+        return res.status(400).json({ message: 'Username and password cannot be empty' });
     }
 
-    const checkUserQuery = 'SELECT * FROM users WHERE email = ?';
-    db.query(checkUserQuery, [email], (err, result) => {
-        if (err) {
-            return res.status(500).json({ message: 'Server error', error: err });
-        }
-        if (result.length > 0) {
+    try {
+        const [users] = await db.promise().query('SELECT * FROM users WHERE email = ?', [email]);
+        if (users.length > 0) {
             return res.status(400).json({ message: 'User already exists' });
         }
 
-        // Hash the password
-        bcrypt.hash(password, 10, (err, hashedPassword) => {
-            if (err) {
-                return res.status(500).json({ message: 'Error hashing password', error: err });
-            }
-
-            const insertUserQuery = 'INSERT INTO users (username, email, password) VALUES (?, ?, ?)';
-            db.query(insertUserQuery, [username, email, hashedPassword], (err) => {
-                if (err) {
-                    return res.status(500).json({ message: 'Database error', error: err });
-                }
-                res.status(200).json({ message: 'User registered successfully' });
-            });
-        });
-    });
+        const hashedPassword = await bcrypt.hash(password, 10);
+        await db.promise().query('INSERT INTO users (username, email, password) VALUES (?, ?, ?)', [username, email, hashedPassword]);
+        res.status(200).json({ message: 'User registered successfully' });
+    } catch (error) {
+        console.error('Error during signup:', error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
 });
+
 
 // Login endpoint
 app.post('/api/login', (req, res) => {
