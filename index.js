@@ -11,7 +11,11 @@ dotenv.config();
 
 const app = express();
 app.use(bodyParser.json());
-app.use(cors());
+app.use(cors({
+    origin: ['http://localhost:3000'], // Adjust this to your frontend URL as needed
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    credentials: true,
+}));
 
 // MySQL Database connection pool
 const db = mysql.createPool({
@@ -65,10 +69,10 @@ app.get('/api/setup-users-table', (req, res) => {
 app.post('/api/signup', async (req, res) => {
     const { username, email, password } = req.body;
 
+    // Validate inputs
     if (!email || !emailValidator.validate(email)) {
         return res.status(400).json({ message: 'Invalid email format' });
     }
-
     if (!password || !username) {
         return res.status(400).json({ message: 'Username and password cannot be empty' });
     }
@@ -81,55 +85,46 @@ app.post('/api/signup', async (req, res) => {
 
         const hashedPassword = await bcrypt.hash(password, 10);
         await db.promise().query('INSERT INTO users (username, email, password) VALUES (?, ?, ?)', [username, email, hashedPassword]);
-        res.status(200).json({ message: 'User registered successfully' });
+        res.status(201).json({ message: 'User registered successfully' });
     } catch (error) {
         console.error('Error during signup:', error);
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 });
 
-
 // Login endpoint
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
 
+    // Validate inputs
     if (!email || !emailValidator.validate(email)) {
         return res.status(400).json({ message: 'Invalid email format' });
     }
-
     if (!password) {
         return res.status(400).json({ message: 'Password cannot be empty' });
     }
 
-    const query = 'SELECT * FROM users WHERE email = ?';
-    db.query(query, [email], (err, result) => {
-        if (err) {
-            console.error('Database query error:', err);
-            return res.status(500).json({ message: 'Server error', error: err.message });
-        }
+    try {
+        const [result] = await db.promise().query('SELECT * FROM users WHERE email = ?', [email]);
         if (result.length === 0) {
             return res.status(400).json({ message: 'User not found' });
         }
 
         const user = result[0];
-        bcrypt.compare(password, user.password, (err, isMatch) => {
-            if (err) {
-                console.error('Password comparison error:', err);
-                return res.status(500).json({ message: 'Error comparing passwords', error: err.message });
-            }
-            if (isMatch) {
-                return res.json({ message: 'Login successful' });
-            } else {
-                return res.status(400).json({ message: 'Invalid credentials' });
-            }
-        });
-    });
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (isMatch) {
+            return res.json({ message: 'Login successful' });
+        } else {
+            return res.status(400).json({ message: 'Invalid credentials' });
+        }
+    } catch (error) {
+        console.error('Error during login:', error);
+        return res.status(500).json({ message: 'Server error', error: error.message });
+    }
 });
 
 // Setup Database and Notes Table
 app.get('/api/setup-database', (req, res) => {
-    const createDatabaseQuery = 'CREATE DATABASE IF NOT EXISTS notesApp';
-    const useDatabaseQuery = 'USE notesApp';
     const createTableQuery = `
         CREATE TABLE IF NOT EXISTS Notes (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -139,99 +134,90 @@ app.get('/api/setup-database', (req, res) => {
         )
     `;
 
-    db.query(createDatabaseQuery, (err) => {
+    db.query(createTableQuery, (err) => {
         if (err) {
-            return res.status(500).json({ message: 'Error creating database', error: err });
+            return res.status(500).json({ message: 'Error creating table', error: err });
         }
-        db.query(useDatabaseQuery, (err) => {
-            if (err) {
-                return res.status(500).json({ message: 'Error selecting database', error: err });
-            }
-            db.query(createTableQuery, (err) => {
-                if (err) {
-                    return res.status(500).json({ message: 'Error creating table', error: err });
-                }
-                res.status(200).json({ message: 'Database and table created successfully' });
-            });
-        });
+        res.status(200).json({ message: 'Notes table created successfully' });
     });
 });
 
 // 1. Get All Notes (Read)
-app.get('/api/notes', (req, res) => {
+app.get('/api/notes', async (req, res) => {
     const query = 'SELECT * FROM Notes';
-    db.query(query, (err, results) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
+    try {
+        const [results] = await db.promise().query(query);
         res.json(results);
-    });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
 });
 
 // 2. Get Note by ID (Read)
-app.get('/api/notes/:id', (req, res) => {
+app.get('/api/notes/:id', async (req, res) => {
     const { id } = req.params;
     const query = 'SELECT * FROM Notes WHERE id = ?';
-    db.query(query, [id], (err, results) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
+    try {
+        const [results] = await db.promise().query(query, [id]);
         if (results.length === 0) {
             return res.status(404).json({ message: 'Note not found' });
         }
         res.json(results[0]);
-    });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
 });
 
 // 3. Create a New Note (Create)
-app.post('/api/notes', (req, res) => {
+app.post('/api/notes', async (req, res) => {
     const { title, content } = req.body;
     if (!title || !content) {
         return res.status(400).json({ message: 'Title and content are required' });
     }
     const query = 'INSERT INTO Notes (title, content) VALUES (?, ?)';
-    db.query(query, [title, content], (err, results) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
-        res.status(200).json({ id: results.insertId, title, content });
-    });
+    try {
+        const [results] = await db.promise().query(query, [title, content]);
+        res.status(201).json({ id: results.insertId, title, content });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
 });
 
 // 4. Update a Note (Update)
-app.put('/api/notes/:id', (req, res) => {
+app.put('/api/notes/:id', async (req, res) => {
     const { id } = req.params;
     const { title, content } = req.body;
     if (!title || !content) {
         return res.status(400).json({ message: 'Title and content are required' });
     }
     const query = 'UPDATE Notes SET title = ?, content = ? WHERE id = ?';
-    db.query(query, [title, content, id], (err, results) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
+    try {
+        const [results] = await db.promise().query(query, [title, content, id]);
         if (results.affectedRows === 0) {
             return res.status(404).json({ message: 'Note not found' });
         }
         res.json({ message: 'Note updated successfully' });
-    });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
 });
 
 // 5. Delete a Note (Delete)
-app.delete('/api/notes/:id', (req, res) => {
+app.delete('/api/notes/:id', async (req, res) => {
     const { id } = req.params;
     const query = 'DELETE FROM Notes WHERE id = ?';
-    db.query(query, [id], (err, results) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
+    try {
+        const [results] = await db.promise().query(query, [id]);
         if (results.affectedRows === 0) {
             return res.status(404).json({ message: 'Note not found' });
         }
         res.json({ message: 'Note deleted successfully' });
-    });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
 });
 
+// Start the server
 const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => {
     console.log(`Server is running at http://localhost:${PORT}`);
