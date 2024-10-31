@@ -1,49 +1,58 @@
-
 const express = require('express');
 const mysql = require('mysql2');
 const bodyParser = require('body-parser');
 const bcrypt = require('bcrypt');
 const emailValidator = require('email-validator');
 const dotenv = require('dotenv');
+const cors = require('cors');
 
 // Load environment variables from .env file
 dotenv.config();
 
 const app = express();
 app.use(bodyParser.json());
+app.use(cors());
 
-// MySQL Database connection
-const db = mysql.createConnection({
+// MySQL Database connection pool
+const db = mysql.createPool({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
     port: process.env.DB_PORT,
+    connectionLimit: 10, // Set the maximum number of connections
+    waitForConnections: true,
+    queueLimit: 0,
+    connectTimeout: 10000,
 });
 
-// Connect to MySQL
-db.connect((err) => {
+// Test Database Connection
+db.getConnection((err, connection) => {
     if (err) {
         console.error('Database connection failed:', err.stack);
         return;
     }
     console.log('Connected to MySQL database');
+    connection.release();
 });
-app.get("/",(req,res)=>{
-    res.send("Hello")
-})
+
+// Basic route for testing
+app.get("/", (req, res) => {
+    res.send("Hello");
+});
+
+// Setup Users Table
 app.get('/api/setup-users-table', (req, res) => {
-    // SQL query to create users table
     const createUsersTableQuery = `
         CREATE TABLE IF NOT EXISTS users (
             id INT AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(255) NOT NULL,
             email VARCHAR(255) NOT NULL UNIQUE,
             password VARCHAR(255) NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     `;
 
-    // Execute the query
     db.query(createUsersTableQuery, (err) => {
         if (err) {
             return res.status(500).json({ message: 'Error creating users table', error: err });
@@ -53,8 +62,8 @@ app.get('/api/setup-users-table', (req, res) => {
 });
 
 // Register endpoint
-app.post('/api/register', (req, res) => {
-    const { email, password } = req.body;
+app.post('/api/signup', (req, res) => {
+    const { username, email, password } = req.body;
 
     // Validate email
     if (!email || !emailValidator.validate(email)) {
@@ -81,12 +90,12 @@ app.post('/api/register', (req, res) => {
                 return res.status(500).json({ message: 'Error hashing password', error: err });
             }
 
-            const insertUserQuery = 'INSERT INTO users (email, password) VALUES (?, ?)';
-            db.query(insertUserQuery, [email, hashedPassword], (err, result) => {
+            const insertUserQuery = 'INSERT INTO users (username, email, password) VALUES (?, ?, ?)';
+            db.query(insertUserQuery, [username, email, hashedPassword], (err) => {
                 if (err) {
                     return res.status(500).json({ message: 'Database error', error: err });
                 }
-                res.status(201).json({ message: 'User registered successfully' });
+                res.status(200).json({ message: 'User registered successfully' });
             });
         });
     });
@@ -107,7 +116,8 @@ app.post('/api/login', (req, res) => {
     const query = 'SELECT * FROM users WHERE email = ?';
     db.query(query, [email], (err, result) => {
         if (err) {
-            return res.status(500).json({ message: 'Server error', error: err });
+            console.error('Database query error:', err);
+            return res.status(500).json({ message: 'Server error', error: err.message });
         }
         if (result.length === 0) {
             return res.status(400).json({ message: 'User not found' });
@@ -116,7 +126,8 @@ app.post('/api/login', (req, res) => {
         const user = result[0];
         bcrypt.compare(password, user.password, (err, isMatch) => {
             if (err) {
-                return res.status(500).json({ message: 'Error comparing passwords', error: err });
+                console.error('Password comparison error:', err);
+                return res.status(500).json({ message: 'Error comparing passwords', error: err.message });
             }
             if (isMatch) {
                 return res.json({ message: 'Login successful' });
@@ -126,14 +137,11 @@ app.post('/api/login', (req, res) => {
         });
     });
 });
+
+// Setup Database and Notes Table
 app.get('/api/setup-database', (req, res) => {
-    // Query to create database if it doesn't exist
     const createDatabaseQuery = 'CREATE DATABASE IF NOT EXISTS notesApp';
-    
-    // Query to use the database
     const useDatabaseQuery = 'USE notesApp';
-    
-    // Query to create Notes table
     const createTableQuery = `
         CREATE TABLE IF NOT EXISTS Notes (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -143,7 +151,6 @@ app.get('/api/setup-database', (req, res) => {
         )
     `;
 
-    // Execute the queries
     db.query(createDatabaseQuery, (err) => {
         if (err) {
             return res.status(500).json({ message: 'Error creating database', error: err });
@@ -161,6 +168,7 @@ app.get('/api/setup-database', (req, res) => {
         });
     });
 });
+
 // 1. Get All Notes (Read)
 app.get('/api/notes', (req, res) => {
     const query = 'SELECT * FROM Notes';
@@ -198,7 +206,7 @@ app.post('/api/notes', (req, res) => {
         if (err) {
             return res.status(500).json({ error: err.message });
         }
-        res.status(201).json({ id: results.insertId, title, content });
+        res.status(200).json({ id: results.insertId, title, content });
     });
 });
 
@@ -238,5 +246,5 @@ app.delete('/api/notes/:id', (req, res) => {
 
 const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`Server is running at http://localhost:${PORT}`);
 });
