@@ -11,11 +11,6 @@ dotenv.config();
 
 const app = express();
 app.use(bodyParser.json());
-app.use(cors({
-    origin: ['http://localhost:3000'], // Adjust this to your frontend URL as needed
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    credentials: true,
-}));
 
 // MySQL Database connection pool
 const db = mysql.createPool({
@@ -66,28 +61,32 @@ app.get('/api/setup-users-table', (req, res) => {
 });
 
 // Register endpoint
-app.post('/api/signup', async (req, res) => {
-    const { username, email, password } = req.body;
+app.post('/api/register', async (req, res) => {
+    const { username, email, password } = req.body; // Include username
 
     // Validate inputs
     if (!email || !emailValidator.validate(email)) {
         return res.status(400).json({ message: 'Invalid email format' });
     }
-    if (!password || !username) {
+    if (!password || !username) { // Make sure username is included in the validation
         return res.status(400).json({ message: 'Username and password cannot be empty' });
     }
 
     try {
+        // Check if user already exists
         const [users] = await db.promise().query('SELECT * FROM users WHERE email = ?', [email]);
         if (users.length > 0) {
             return res.status(400).json({ message: 'User already exists' });
         }
 
-        const hashedPassword = await bcrypt.hash(password, 10);
-        await db.promise().query('INSERT INTO users (username, email, password) VALUES (?, ?, ?)', [username, email, hashedPassword]);
+        // Hash the password
+        const hashedPassword = await bcrypt.hash(password, 10); // Use await here
+        const insertUserQuery = 'INSERT INTO users (username, email, password) VALUES (?, ?, ?)'; // Include username
+        await db.promise().query(insertUserQuery, [username, email, hashedPassword]); // Use await for the insert
+
         res.status(201).json({ message: 'User registered successfully' });
     } catch (error) {
-        console.error('Error during signup:', error);
+        console.error('Error during registration:', error);
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 });
@@ -104,27 +103,38 @@ app.post('/api/login', async (req, res) => {
         return res.status(400).json({ message: 'Password cannot be empty' });
     }
 
-    try {
-        const [result] = await db.promise().query('SELECT * FROM users WHERE email = ?', [email]);
+    const query = 'SELECT * FROM users WHERE email = ?';
+    db.query(query, [email], (err, result) => {
+        if (err) {
+            return res.status(500).json({ message: 'Server error', error: err });
+        }
         if (result.length === 0) {
             return res.status(400).json({ message: 'User not found' });
         }
 
         const user = result[0];
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (isMatch) {
-            return res.json({ message: 'Login successful' });
-        } else {
-            return res.status(400).json({ message: 'Invalid credentials' });
-        }
-    } catch (error) {
-        console.error('Error during login:', error);
-        return res.status(500).json({ message: 'Server error', error: error.message });
-    }
+        bcrypt.compare(password, user.password, (err, isMatch) => {
+            if (err) {
+                return res.status(500).json({ message: 'Error comparing passwords', error: err });
+            }
+            if (isMatch) {
+                return res.json({ message: 'Login successful' });
+            } else {
+                return res.status(400).json({ message: 'Invalid credentials' });
+            }
+        });
+    });
 });
 
 // Setup Database and Notes Table
 app.get('/api/setup-database', (req, res) => {
+    // Query to create database if it doesn't exist
+    const createDatabaseQuery = 'CREATE DATABASE IF NOT EXISTS notesApp';
+    
+    // Query to use the database
+    const useDatabaseQuery = 'USE notesApp';
+    
+    // Query to create Notes table
     const createTableQuery = `
         CREATE TABLE IF NOT EXISTS Notes (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -134,7 +144,8 @@ app.get('/api/setup-database', (req, res) => {
         )
     `;
 
-    db.query(createTableQuery, (err) => {
+    // Execute the queries
+    db.query(createDatabaseQuery, (err) => {
         if (err) {
             return res.status(500).json({ message: 'Error creating table', error: err });
         }
