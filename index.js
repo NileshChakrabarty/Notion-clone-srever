@@ -11,6 +11,7 @@ dotenv.config();
 
 const app = express();
 app.use(bodyParser.json());
+app.use(cors());
 
 // MySQL Database connection pool
 const db = mysql.createPool({
