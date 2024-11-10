@@ -69,7 +69,9 @@ app.post('/api/register', async (req, res) => {
     if (!email || !emailValidator.validate(email)) {
         return res.status(400).json({ message: 'Invalid email format' });
     }
-    
+    if (!password || !username) { // Make sure username is included in the validation
+        return res.status(400).json({ message: 'Username and password cannot be empty' });
+    }
 
     try {
         // Check if user already exists
